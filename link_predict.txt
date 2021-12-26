@@ -1,0 +1,183 @@
+from __future__ import division
+
+
+from pyspark.sql import SparkSession, SQLContext
+from pyspark.sql.functions import col
+from pyspark.sql import Row
+from graphframes import *
+import re
+from math import log
+import operator
+
+from pyspark import SparkContext
+sc = SparkContext()
+sc.addPyFile('/home/pushkar/Downloads/graphframes-0.8.0-spark3.0-s_2.12.jar')
+
+
+def get_neighbours(vertex):
+    
+    neighbours1 = graph.edges.filter("src = '{}'".format(vertex)).select(
+        "dst").distinct()
+    neighbours2 = graph.edges.filter("dst = '{}'".format(vertex)).select(
+        "src").distinct()
+    neighbours = neighbours1.union(neighbours2)
+    return neighbours.rdd.map(lambda row: row.dst).collect()
+
+
+def get_subgraph(list_vertices):
+    
+    # Create the subgraph from the new edges and return it
+    return GraphFrame(graph.vertices, edge_select)
+
+
+def get_guidance(subgraph_degree, original_degree):
+    
+    log_original_degree = log(original_degree)
+    return subgraph_degree/log_original_degree
+
+
+def calculate_similarity(subgraph_degrees):
+    """
+    Given a list of subgraph degrees, this function calls the guidance
+    function and calculates the similarity of a particular node with all it's
+    non-connected nodes.
+
+    :param subgraph_degrees: A list of lists containing the non connected node
+    and degrees of common neighbours from the subgraph.
+
+    :return: A dictionary of similarity of each non-connected node
+    """
+    similarity_dict = []
+    for nc_node in subgraph_degrees:
+        similarity = 0
+        for common_node in nc_node[1]:
+            # Getting the degree of the common neighbour node from the original
+            # graph
+            original_degree = graph.degrees.filter("id = '{}'".format(
+                common_node.id)).select("degree").collect()
+
+            # Getting the degree of the common neighbour node from the subgraph
+            sub_degree = common_node.degree
+
+            # Calling the function to calculate guidance for the common
+            # neighbour node
+            guidance = get_guidance(sub_degree, original_degree[0].degree)
+
+            # Adding the guidance to the similarity of the non-connected node
+            similarity += guidance
+
+        similarity_dict.append((nc_node[0], similarity))
+    return similarity_dict
+
+
+def node_processing():
+    
+    # Get the list of all nodes of the graph
+    graph_similarity = []
+    vertices_list = [i.id for i in graph.vertices.collect()]
+
+    for root_node in vertices_list:
+        print ("Vertex " + str(root_node))
+
+        # Get the neighbours of the node
+        root_neighbours = set(get_neighbours(root_node))
+
+        # Get the set of non-connected nodes by removing the node and the
+        # neighbours of the node from the list of nodes.
+        not_connected_nodes = set(vertices_list).difference(
+            set(root_neighbours)).difference({root_node})
+
+        subgraph_degrees = []
+
+        for nc_node in not_connected_nodes:
+
+            # Get neighbour of the non-connected node
+            node_neighbours = set(get_neighbours(nc_node))
+
+            # Get the common neighbours by taking the intersion of neighbours
+            # of both the nodes.
+            common_neighbours = root_neighbours.intersection(node_neighbours)
+
+            if common_neighbours:
+                # Create a set of all the vertices for which the subgraph needs
+                # to be created, i.e., the common neighbours, the root node and
+                # the non-connected node.
+                subgraph_vertices = common_neighbours.union({nc_node},
+                                                            {root_node})
+
+                # Call the function to create the subgraph
+                subgraph = get_subgraph(subgraph_vertices)
+
+                # Find the degrees of the common neighbours from the subgraph
+                common_neighbours_degrees = subgraph.degrees.filter(
+                    col("id").isin(common_neighbours)).collect()
+                subgraph_degrees.append((nc_node, common_neighbours_degrees))
+
+        # Call the function to calculate the similarity of each non-connected
+        # node with the current node.
+        similarity = sorted(calculate_similarity(subgraph_degrees),
+                            key=operator.itemgetter(1), reverse=True)
+        graph_similarity.append((root_node, similarity))
+        print (similarity)
+    return graph_similarity
+
+
+def create_graph(file_path, separator):
+    
+
+    # Get all the rows from the file
+    edges = spark.read.text(file_path).rdd.map(lambda r: r[0])
+    split_edges = edges.map(lambda line: re.split(separator, line))
+    edges_rdd = split_edges. \
+        map(lambda p: Row(src=str(p[0].strip()), dst=str(p[1].strip())))
+
+    # Create data frame of edges
+    e_df = spark.createDataFrame(edges_rdd)
+    e_df.cache()
+
+    src = split_edges.map(lambda p: (str(p[0].strip()),))
+    dst = split_edges.map(lambda p: (str(p[1].strip()),))
+    vertex_rdd = src.union(dst)
+
+    # Create data frame of vertices
+    v_df = spark.createDataFrame(vertex_rdd, schema=["id"]).dropDuplicates(
+        ["id"])
+    v_df.cache()
+
+    # Create the graph for the above calculated edges and vertices
+    print ("Graph created")
+    g=GraphFrame(v_df, e_df)
+    g.vertices.show()
+    g.edges.show()
+    return g
+
+
+if __name__ == '__main__':
+
+    import argparse
+
+    parser = argparse.ArgumentParser(
+        description="Run it using spark-submit in the following way: \n\n"
+                    "$SPARK_HOME/bin/spark-submit "
+                    "--packages graphframes:graphframes:0.8.0-spark3.0-s_2.12 ",
+        formatter_class=argparse.RawTextHelpFormatter)
+
+    parser.add_argument("path", help="Path of the file containing the data.")
+    parser.add_argument("separator", help="The separator for the file")
+    args = parser.parse_args()
+
+    # Build spark session locally
+    spark = SparkSession.builder.master("local[16]").appName(
+        "Link Prediction").getOrCreate()
+    spark.sparkContext.setLogLevel("ERROR")
+
+    # Call the function to create a graph for the given file
+    graph = create_graph(args.path, args.separator)
+
+    # Call the function to calculate similarity between all non-connected
+    # nodes in the graph
+    node_processing()
+
+    # Stop spark session
+    spark.stop()
+

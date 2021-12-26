@@ -1,0 +1,161 @@
+import pandas as pd
+import numpy as np
+import random
+import networkx as nx
+from tqdm import tqdm
+import re
+import matplotlib.pyplot as plt
+import json
+df = pd.read_csv("/home/pushkar/Desktop/dataset.csv")
+print(df[:5])
+
+col_1 = df['Symptom_1'].to_list()
+col_2 = df['Symptom_2'].to_list()
+col_3 = df['Symptom_3'].to_list()
+col_4 = df['Symptom_4'].to_list()
+
+l1 = []
+for i in range(len(col_1)):
+    col_1 = np.array(col_1)
+    col_2 = np.array(col_2)
+    col_3 = np.array(col_3)
+    col_4 = np.array(col_4)
+
+for i in range(len(col_4)):
+    l1.append([col_1[i], col_2[i]])
+    l1.append([col_1[i], col_3[i]])
+    l1.append([col_1[i], col_4[i]])
+    l1.append([col_2[i], col_3[i]])
+    l1.append([col_2[i], col_4[i]])
+    l1.append([col_3[i], col_4[i]])
+
+res = []
+[res.append(x) for x in l1 if x not in res]
+for i in range(len(res)):
+    res[i][0] = res[i][0].strip()
+    res[i][1] = res[i][1].strip()
+
+l2 = []
+
+for i in range(len(res)):
+    if res[i][0] == 'nan' or res[i][1] == 'nan':
+        l2.append(i)
+
+for i in range(len(l2)):
+    a = res[l2[i]]
+    print(a)
+node_1 = []
+node_2 = []
+
+for i in range(len(res)):
+    node_1.append(res[i][0])
+    node_2.append(res[i][1])
+
+print()
+print(node_1)
+print(node_2)
+print()
+
+print(len(node_1),len(node_2))
+for i in sorted(l2,reverse=True):
+    del node_1[i]
+    del node_2[i]
+
+print(len(node_1),len(node_2))
+
+
+
+
+file = open("list.txt", "w")
+for index in range(len(node_1)):
+    file.write(str(node_1[index]) + " " + str(node_2[index]) + "\n")
+file.close()
+
+
+
+node_3 = node_1 + node_2
+
+node_3 = list(set(node_3))
+d = dict()
+for i in range(len(node_3)):
+    d[node_3[i]] = i
+print(d)
+for i in range(len(node_1)):
+    node_1[i] = d[node_1[i]]
+    node_2[i] = d[node_2[i]]
+node_5 = []
+for i in range(len(node_1)):
+    node_5.append([node_1[i], node_2[i]])
+G = nx.Graph()
+G.add_edges_from(node_5)
+print()
+print(node_5)
+print()
+print(list(nx.adamic_adar_index(G)))
+fb_df = pd.DataFrame({'node_1': node_1, 'node_2': node_2})
+print(fb_df)
+
+G = nx.from_pandas_edgelist(fb_df, "node_1", "node_2", create_using=nx.Graph())
+plt.figure(figsize=(10,10))
+
+pos = nx.random_layout(G, seed=23)
+nx.draw(G, with_labels=False,  pos = pos, node_size = 40, alpha = 0.6, width = 0.7)
+
+plt.show()
+'''
+node_list=node_1+node_2
+node_list = list(dict.fromkeys(node_list))
+
+# build adjacency matrix
+adj_G = nx.to_numpy_matrix(G, nodelist = node_list)
+print(adj_G.shape[0])
+print(adj_G.shape[1])
+
+
+all_unconnected_pairs = []
+
+# traverse adjacency matrix
+offset = 0
+for i in tqdm(range(adj_G.shape[0])):
+    for j in range(offset,adj_G.shape[1]):
+        if i != j:
+            if nx.shortest_path_length(G, i,j) <= 2:
+                if adj_G[i,j] == 0:
+                    all_unconnected_pairs.append([node_list[i],node_list[j]])
+
+    offset = offset + 1
+
+node_1_unlinked = [i[0] for i in all_unconnected_pairs]
+node_2_unlinked = [i[1] for i in all_unconnected_pairs]
+
+data = pd.DataFrame({'node_1':node_1_unlinked,
+                     'node_2':node_2_unlinked})
+
+# add target variable 'link'
+data['link'] = 0
+
+initial_node_count = len(G.nodes)
+
+fb_df_temp = fb_df.copy()
+
+# empty list to store removable links
+omissible_links_index = []
+
+for i in tqdm(fb_df.index.values):
+
+    # remove a node pair and build a new graph
+    G_temp = nx.from_pandas_edgelist(fb_df_temp.drop(index=i), "node_1", "node_2", create_using=nx.Graph())
+
+    # check there is no spliting of graph and number of nodes is same
+    if (nx.number_connected_components(G_temp) == 1) and (len(G_temp.nodes) == initial_node_count):
+        omissible_links_index.append(i)
+        fb_df_temp = fb_df_temp.drop(index=i)
+fb_df_ghost = fb_df.loc[omissible_links_index]
+
+# add the target variable 'link'
+fb_df_ghost['link'] = 1
+
+data = data.append(fb_df_ghost[['node_1', 'node_2', 'link']], ignore_index=True)
+
+print(data['link'].value_counts())'''
+
