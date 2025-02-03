@@ -23,3 +23,6 @@ For creating the txt file we can run the main.py file which reads data from data
 We can also obtain the graph picture being created by running main.py file.(The snapshot is in this folder)
 
 *Snapshots of the result are also in this folder*
+
+![image](https://github.com/user-attachments/assets/b5f50b45-5b2f-4f4e-8624-43fcc1bc587f)
+
